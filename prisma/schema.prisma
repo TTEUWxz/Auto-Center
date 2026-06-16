@@ -1,0 +1,415 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  ATENDENTE
+  MECANICO
+}
+
+enum TenantPlan {
+  TRIAL
+  BASICO
+  PRO
+}
+
+enum TenantStatus {
+  ATIVO
+  SUSPENSO
+  CANCELADO
+}
+
+enum OSStatus {
+  ORCAMENTO
+  APROVADA
+  EM_EXECUCAO
+  CONCLUIDA
+  ENTREGUE
+  CANCELADA
+}
+
+enum FormaPagamento {
+  DINHEIRO
+  PIX
+  CARTAO_CREDITO
+  CARTAO_DEBITO
+  BOLETO
+  CHEQUE
+  OUTROS
+}
+
+enum LancamentoTipo {
+  RECEITA
+  DESPESA
+}
+
+enum LancamentoStatus {
+  PENDENTE
+  PAGO
+  CANCELADO
+}
+
+enum LembreteStatus {
+  AGENDADO
+  ENVIADO
+  CONCLUIDO
+  CANCELADO
+}
+
+enum LembreteTipo {
+  TROCA_OLEO
+  REVISAO
+  ALINHAMENTO
+  BALANCEAMENTO
+  OUTRO
+}
+
+enum LembreteBaseadoEm {
+  DATA
+  KM
+}
+
+enum AgendamentoStatus {
+  AGENDADO
+  CONFIRMADO
+  CONCLUIDO
+  CANCELADO
+  NAO_COMPARECEU
+}
+
+enum Combustivel {
+  GASOLINA
+  ETANOL
+  FLEX
+  DIESEL
+  GNV
+  ELETRICO
+  HIBRIDO
+}
+
+// ─── Tenant (Oficina) ─────────────────────────────────────────────────────────
+
+model Tenant {
+  id        String       @id @default(cuid())
+  nome      String
+  cnpj      String?      @unique
+  telefone  String?
+  email     String?
+  endereco  String?
+  cidade    String?
+  estado    String?
+  cep       String?
+  logoUrl   String?
+  // Horários e configurações em JSON flexível
+  horarios  Json?        // { seg: "08:00-18:00", ... }
+  config    Json?        // template WhatsApp, cor primária, etc.
+  plano     TenantPlan   @default(TRIAL)
+  status    TenantStatus @default(ATIVO)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  users              User[]
+  clientes           Cliente[]
+  veiculos           Veiculo[]
+  servicos           Servico[]
+  pecas              Peca[]
+  ordensServico      OrdemServico[]
+  lancamentos        LancamentoFinanceiro[]
+  lembretes          LembreteRetorno[]
+  agendamentos       Agendamento[]
+
+  @@map("tenants")
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  // authId é o UUID do Supabase Auth (auth.users.id)
+  authId    String   @unique
+  nome      String
+  email     String
+  papel     UserRole @default(ATENDENTE)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  ordensComoMecanico OrdemServico[] @relation("MecanicoOS")
+
+  @@index([tenantId])
+  @@index([authId])
+  @@map("users")
+}
+
+// ─── Cliente ──────────────────────────────────────────────────────────────────
+
+model Cliente {
+  id           String   @id @default(cuid())
+  tenantId     String
+  nome         String
+  cpfCnpj      String?
+  telefone     String   // principal — usado para WhatsApp
+  telefoneFix  String?
+  email        String?
+  endereco     String?
+  cidade       String?
+  estado       String?
+  observacoes  String?
+  ativo        Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  veiculos     Veiculo[]
+  ordensServico OrdemServico[]
+  lembretes    LembreteRetorno[]
+  agendamentos Agendamento[]
+
+  @@index([tenantId])
+  @@index([tenantId, telefone])
+  @@map("clientes")
+}
+
+// ─── Veículo ──────────────────────────────────────────────────────────────────
+
+model Veiculo {
+  id          String      @id @default(cuid())
+  tenantId    String
+  clienteId   String
+  placa       String
+  marca       String
+  modelo      String
+  ano         Int?
+  cor         String?
+  kmAtual     Int?
+  combustivel Combustivel?
+  chassi      String?
+  observacoes String?
+  ativo       Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  cliente      Cliente        @relation(fields: [clienteId], references: [id])
+  ordensServico OrdemServico[]
+  lembretes    LembreteRetorno[]
+  agendamentos Agendamento[]
+
+  @@index([tenantId])
+  @@index([tenantId, placa])
+  @@map("veiculos")
+}
+
+// ─── Catálogo de Serviços ─────────────────────────────────────────────────────
+
+model Servico {
+  id             String   @id @default(cuid())
+  tenantId       String
+  nome           String
+  descricao      String?
+  precoPadrao    Decimal  @default(0) @db.Decimal(10, 2)
+  tempoEstimado  Int?     // em minutos
+  ativo          Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id])
+  osItens   OSItemServico[]
+
+  @@index([tenantId])
+  @@map("servicos")
+}
+
+// ─── Estoque de Peças ─────────────────────────────────────────────────────────
+
+model Peca {
+  id             String   @id @default(cuid())
+  tenantId       String
+  nome           String
+  codigo         String?  // SKU
+  precoCusto     Decimal  @default(0) @db.Decimal(10, 2)
+  precoVenda     Decimal  @default(0) @db.Decimal(10, 2)
+  quantidade     Int      @default(0)
+  estoqueMinimo  Int      @default(1)
+  fornecedor     String?
+  observacoes    String?
+  ativo          Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant  Tenant       @relation(fields: [tenantId], references: [id])
+  osItens OSItemPeca[]
+
+  @@index([tenantId])
+  @@index([tenantId, codigo])
+  @@map("pecas")
+}
+
+// ─── Ordem de Serviço ─────────────────────────────────────────────────────────
+
+model OrdemServico {
+  id              String         @id @default(cuid())
+  tenantId        String
+  numero          Int            // sequencial por oficina
+  clienteId       String
+  veiculoId       String
+  mecanicoId      String?
+  status          OSStatus       @default(ORCAMENTO)
+  kmEntrada       Int?
+  kmSaida         Int?
+  dataEntrada     DateTime       @default(now())
+  dataPrevisao    DateTime?
+  dataConclusao   DateTime?
+  dataEntrega     DateTime?
+  desconto        Decimal        @default(0) @db.Decimal(10, 2)
+  total           Decimal        @default(0) @db.Decimal(10, 2)
+  formaPagamento  FormaPagamento?
+  observacoes     String?
+  // Token público para aprovação pelo cliente (expira em 72h)
+  aprovacaoToken  String?        @unique
+  aprovacaoExpira DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id])
+  cliente   Cliente         @relation(fields: [clienteId], references: [id])
+  veiculo   Veiculo         @relation(fields: [veiculoId], references: [id])
+  mecanico  User?           @relation("MecanicoOS", fields: [mecanicoId], references: [id])
+  servicos  OSItemServico[]
+  pecas     OSItemPeca[]
+  lancamentos LancamentoFinanceiro[]
+
+  @@unique([tenantId, numero])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([clienteId])
+  @@index([veiculoId])
+  @@map("ordens_servico")
+}
+
+// ─── Itens da OS ─────────────────────────────────────────────────────────────
+
+model OSItemServico {
+  id          String   @id @default(cuid())
+  osId        String
+  servicoId   String?  // null = serviço avulso digitado
+  descricao   String
+  quantidade  Decimal  @default(1) @db.Decimal(10, 3)
+  precoUnit   Decimal  @db.Decimal(10, 2)
+  subtotal    Decimal  @db.Decimal(10, 2)
+  createdAt   DateTime @default(now())
+
+  os      OrdemServico @relation(fields: [osId], references: [id], onDelete: Cascade)
+  servico Servico?     @relation(fields: [servicoId], references: [id])
+
+  @@index([osId])
+  @@map("os_itens_servico")
+}
+
+model OSItemPeca {
+  id          String   @id @default(cuid())
+  osId        String
+  pecaId      String?  // null = peça avulsa
+  descricao   String
+  quantidade  Int      @default(1)
+  precoUnit   Decimal  @db.Decimal(10, 2)
+  subtotal    Decimal  @db.Decimal(10, 2)
+  // Registro de baixa no estoque
+  baixaEfetivada Boolean @default(false)
+  createdAt   DateTime @default(now())
+
+  os   OrdemServico @relation(fields: [osId], references: [id], onDelete: Cascade)
+  peca Peca?        @relation(fields: [pecaId], references: [id])
+
+  @@index([osId])
+  @@map("os_itens_peca")
+}
+
+// ─── Financeiro ───────────────────────────────────────────────────────────────
+
+model LancamentoFinanceiro {
+  id             String           @id @default(cuid())
+  tenantId       String
+  osId           String?          // opcional — origem numa OS
+  tipo           LancamentoTipo
+  descricao      String
+  valor          Decimal          @db.Decimal(10, 2)
+  dataVencimento DateTime
+  dataPagamento  DateTime?
+  status         LancamentoStatus @default(PENDENTE)
+  categoria      String?
+  formaPagamento FormaPagamento?
+  observacoes    String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id])
+  os     OrdemServico? @relation(fields: [osId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, dataVencimento])
+  @@map("lancamentos_financeiros")
+}
+
+// ─── Lembrete de Retorno (WhatsApp) ──────────────────────────────────────────
+
+model LembreteRetorno {
+  id          String            @id @default(cuid())
+  tenantId    String
+  veiculoId   String
+  clienteId   String
+  tipo        LembreteTipo      @default(TROCA_OLEO)
+  dataPrevista DateTime
+  kmPrevisto  Int?
+  baseadoEm   LembreteBaseadoEm @default(DATA)
+  status      LembreteStatus    @default(AGENDADO)
+  canal       String            @default("WHATSAPP")
+  mensagemEnviada String?
+  enviadoEm   DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  veiculo Veiculo @relation(fields: [veiculoId], references: [id])
+  cliente Cliente @relation(fields: [clienteId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, status, dataPrevista])
+  @@map("lembretes_retorno")
+}
+
+// ─── Agendamento ─────────────────────────────────────────────────────────────
+
+model Agendamento {
+  id              String            @id @default(cuid())
+  tenantId        String
+  clienteId       String
+  veiculoId       String?
+  servicoPrevisto String?
+  dataHora        DateTime
+  duracao         Int?              // minutos estimados
+  status          AgendamentoStatus @default(AGENDADO)
+  observacoes     String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id])
+  cliente Cliente  @relation(fields: [clienteId], references: [id])
+  veiculo Veiculo? @relation(fields: [veiculoId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, dataHora])
+  @@map("agendamentos")
+}
