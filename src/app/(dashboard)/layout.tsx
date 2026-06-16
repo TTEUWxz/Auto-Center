@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { Sidebar } from "@/components/layout/sidebar";
 
+export const dynamic = "force-dynamic";
+
 // Tenant fixo do seed para desenvolvimento sem login
 const DEV_TENANT_ID = "cmqh7evrp000051qpcj5ebji7";
 
